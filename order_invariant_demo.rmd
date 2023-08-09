@@ -1,0 +1,263 @@
+---
+title: "order invariant prior demo"
+author: "Eric Chuu"
+date: "3/20/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+library(mvtnorm)
+library(tmvtnorm)
+library(modeest)
+library(msm)
+library(parallel)
+library(pscl)
+library(MCMCpack)
+library(coda)
+library(ars)
+
+setwd("/Users/sohamghosh/Desktop/orderinvariantfactormodelcode/Archive")
+
+source("GibbsFactMod.R")
+source("ParAnalMod.R")
+source("BetaMatrixBack.R")
+source("LogPriorGivenKMod.R")
+source("LogQsubK.R")
+source("RJMCMCMod.R")
+source("MyTrunNorm.R")
+source("ParAnal.R")
+```
+
+## Parameter and Data Generation
+
+In the following experiments, we have $\beta \in \mathbb{R}^{3\times 2}$ and $\Omega \in \mathbb{R}^{3\times 3}$.
+
+```{r}
+set.seed(214)
+m  = 15       # number of columns in y, number of rows in beta
+k0 = 5       # number of columns in beta (number of factors)
+n  = 500     # number of rows in y (number of observations)
+```
+
+Below, we generate the true parameters. We take $\Omega = I_m$ and randomly generate $\beta$ column by column. Then, the data $y$ is sampled from a MVN distribution with mean 0 and covariance matrix $\Sigma = \Omega + \beta \beta'$.
+
+```{r}
+tau = 0.25
+omega0 = tau * diag(1, m) # identity matrix
+beta0 = matrix(0, m, k0)
+beta0[,1] = c(rtnorm(n = 1, lower = 0, mean = -1), rnorm(n = m - 1, mean = 1))
+beta0[,2] = c(0, rtnorm(n = 1, lower = 0, mean = 1), rnorm(n = m - 2, mean = 1))
+y = rmvnorm(n = n, mean = rep(0, m) , sigma = omega0 + tcrossprod(beta0))
+# y3 = scale(y3, center = TRUE,  scale = TRUE)
+swap_order = sample(m)
+y_swap = y[, swap_order]
+```
+
+```{r}
+beta0
+```
+
+Note that the columns of $y$ permuted so that we can test if the result of using this prior does indeed result in the invariance mentioned in the paper. Observe below that the 2nd and 3rd columns of $y_\textrm{swap}$. **Also, note that we do not center/scale** $y$. 
+
+```{r}
+head(y)
+head(y_swap)
+```
+
+
+## Gibbs Sampler
+
+```{r, echo = FALSE}
+k = k0
+set.seed(1234)
+beta_init = matrix(0, nr = m, nc = k) # init value for beta0 used in Gibbs sampler
+for(i in 1:k) {
+    if(i == 1){
+        beta_init[1, 1] = rtnorm(n = 1, mean = 0, sd =1, lower= 0)
+    } else {
+        lower.vec = c(rep(-Inf, i - 1), 0)
+        beta_init[i, 1:i] = rtmvnorm(n = 1, mean = rep(0, i), sigma = diag(i),
+                                 lower = lower.vec)
+    }
+}
+for(i in (k+1):m) {
+    beta_init[i,] = rmvnorm(n = 1, mean = rep(0, k), sigma = diag(k))
+}
+Sigma_init = rep(1, m)
+```
+
+We start the Gibbs Sampler using the true value of $\beta, \Omega$, just as a sanity check to make sure everything works in the most basic case. 
+
+```{r}
+Sigma_init = diag(omega0)
+beta_init = beta0
+```
+
+```{r}
+nu = 2.2
+C0 = 1
+s = sqrt(.1/2.2)
+
+thin    = 20
+burnin  = 2000
+seed    = 123
+No.Iter = 12000    # number of iterations to run Gibbs sampler
+
+## this gives us a net: No.Iter/thin posterior samples
+
+## Gibbs sampler for the regular dataset: y
+obj = factGibbsMod(y = y, k = k, beta_init, Sigma_init, nu, C0, s, 
+                   No.Iter, burnin, thin, seed)
+
+## Gibbs sampler for the permuted dataset: y_swap
+obj_swap = factGibbsMod(y = y_swap, k = k, beta_init, Sigma_init, nu, C0, s, 
+                        No.Iter, burnin, thin, seed)
+```
+
+
+```{r, echo = FALSE}
+form_sigma = function(obj, n) {
+  sigma_list = vector(mode = "list", length = n)
+  for (i in 1:n) {
+    beta = matrix(unlist(obj$beta[i]), m, k)
+    omega = diag(unlist(obj$Sigma[i]))
+    sigma_list[[i]] = beta %*% t(beta) + omega
+  }
+  return(sigma_list)
+}
+
+form_beta = function(obj, n) {
+  beta_list = vector(mode = "list", length = n)
+  for (i in 1:n) {
+    beta = matrix(unlist(obj$beta[i]), m, k)
+    beta_list[[i]] = beta
+  }
+  return(beta_list)
+}
+
+form_beta_beta = function(obj, n) {
+  beta_list = vector(mode = "list", length = n)
+  for (i in 1:n) {
+    beta = matrix(unlist(obj$beta[i]), m, k)
+    beta_list[[i]] = beta %*% t(beta)
+  }
+  return(beta_list)
+}
+
+mean_sigma = function(sigma_list) {
+  sigma_sum = matrix(0, m, m)
+  for (i in 1:length(sigma_list)) {
+    sigma_sum = sigma_sum + sigma_list[[i]]
+  }
+  return(sigma_sum/length(sigma_list))
+}
+
+mean_beta = function(beta_list) {
+  beta_sum = matrix(0, m, k)
+  for (i in 1:length(beta_list)) {
+    beta_sum = beta_sum + beta_list[[i]]
+  }
+  return(beta_sum/length(beta_list))
+}
+
+mean_beta_beta = function(beta_list) {
+  beta_sum = matrix(0, m, m)
+  for (i in 1:length(beta_list)) {
+    beta_sum = beta_sum + beta_list[[i]]
+  }
+  return(beta_sum/length(beta_list))
+}
+```
+
+
+Next, we reconstruct $\Sigma$ using the posterior samples of $\beta$ and $\Omega$ and take the mean over the samples. 
+
+```{r}
+sigma_list = form_sigma(obj, length(obj$Sigma))
+mean_sigma(sigma_list)
+```
+
+We do the same using the results from the Gibbs sampler that took in the permuted version of $y$.
+
+```{r}
+sigma_swap_list = form_sigma(obj_swap, length(obj_swap$Sigma))
+mean_sigma(sigma_swap_list)
+```
+
+Obviously, these are different, but we find that if we re-order the columns of $\Sigma$ and $\Sigma_{\textrm{swap}}$, we see that each of the entries is quite similar, thus giving the invariant result. 
+
+```{r}
+mean_sigma(sigma_list)[swap_order, swap_order]
+```
+
+
+## Comparing parameter values with posterior means
+
+The results above seem to indicate that there is nothing wrong with the output of the posterior samples since we're able to replicate the invariant property claimed in the paper, but I think there still are some outstanding issues. 
+
+The true value of $\beta$ compared to the posterior mean of the $\beta$'s from the Gibbs sampler do not match. 
+
+```{r}
+beta0
+```
+
+```{r}
+beta_list = form_beta(obj, length(obj$beta))
+mean_beta(beta_list)
+```
+
+
+Next, I checked if $\beta \beta'$ would match its posterior counterpart. These were particularly off.
+
+```{r}
+beta0 %*% t(beta0) # true value of beta beta'
+```
+
+
+```{r}
+# using posterior samples of beta to estimate beta beta'
+beta_beta_list = form_beta_beta(obj, length(obj$beta))
+mean_beta_beta(beta_beta_list)
+```
+
+
+Finally, I checked if the $\Sigma$ reconstructed from the posterior samples could even accurately produce an estimate for the true $\Sigma$. They are similar, but definitely not anywhere close to perfect on the off-diagonals. 
+
+```{r}
+# true Sigma
+beta0 %*% t(beta0) + omega0
+```
+
+
+```{r}
+mean_sigma(sigma_list) # posterior estimate of Sigma
+```
+
+We can compare this to the sample covariance matrix to see how good the covariance estimation is. 
+
+```{r}
+# sample covariance matrix
+1/n * t(y) %*% y
+```
+
+```{r}
+# sample covariance matrix
+cov(y) # same as above cuz y has 0 mean
+```
+
+
+## Conclusion? 
+
+I am not too sure what to make of these results. On one hand, we are able to replicate and confirm the invariant property, and the posterior estimate of $\Sigma$ is halfway reasonable. However, it seems like we cannot accurately recover $\beta$ or $\Omega$, separately. Whether or not this matters in the context of the hybrid estimator, I am unsure. However, even upon removing the center/scaling part, I am still encountering numerical issues in the EP part of the algorithm. Sample size seems large enough and the number of posterior samples is also quite large. 
+
+Before I go back into debugging potential numerical issues (which I don't think is the problem here), are there any glaringly incorrectly specified parts of the algorithm that could be the root of the problems I'm seeing? 
+
+
+
+
+
+

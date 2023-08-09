@@ -1,0 +1,28 @@
+{
+    "id": "0FC14EE1",
+    "path": "~/Desktop/factormodel/Archive/Misspecified.Rmd",
+    "project_path": "Archive/Misspecified.Rmd",
+    "type": "r_markdown",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1687224277410.0,
+    "source_on_save": false,
+    "relative_order": 5,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "326,3",
+        "scrollLine": "0",
+        "last_setup_crc32": ""
+    },
+    "folds": "11|54|26|0|\n31|18|57|0|\n59|18|200|0|\n245|35|292|0|\n258|85|288|0|\n294|20|326|0|\n329|20|391|0|\n330|31|338|0|\n340|36|347|0|\n349|35|356|0|\n",
+    "lastKnownWriteTime": 1691118965,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1691381103084,
+    "read_only": false,
+    "read_only_alternatives": []
+}

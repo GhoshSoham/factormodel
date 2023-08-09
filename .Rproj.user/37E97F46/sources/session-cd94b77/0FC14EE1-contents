@@ -1,0 +1,450 @@
+---
+title: "Misspecified"
+author: "Soham Ghosh"
+date: "2023-06-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+library(mvtnorm)
+library(tmvtnorm)
+library(msm)
+library(pscl)
+library(ars)
+ 
+
+# parallel
+library(foreach)
+library(doParallel)
+
+
+setwd("/Users/sohamghosh/Desktop/orderinvariantfactormodelcode")
+
+```
+
+## Parameter and Data Generation
+Below, we generate the true parameters. We take $\Omega = I_m$ and randomly generate $\beta$ column by column. Then, the data $y$ is sampled from a MVN distribution with mean 0 and covariance matrix $\Sigma = \Omega + \beta \beta'$.
+
+```{r, echo=FALSE}
+# Function that generates data for factor model
+# n - No of samples in data
+# d - Dimension of the data
+# q0 - True no of factor
+# flag - Deciding homoscedastic or heteroscedastic error 
+GenerateData <- function(n, d, q0, flag = 1) {
+  if (flag == 0) {
+    psi = rep(10, d)
+  }
+  if (flag == 1) {
+    psi = (10:(10+d-1)/4)
+  }
+  
+  # Generating loading matrix
+  W_true = matrix(rnorm(d*q0, 0, 1), nrow = d, ncol = q0)
+  
+  # Generating data matrix
+  y = matrix(0, nrow = n, ncol = d)
+  for(i in 1:n){
+    f = rnorm(q0, mean = 0, sd = 1)
+    y[i,] = rmvnorm(n = 1, mean = W_true %*% f, sigma = diag(psi))
+  }
+  
+  return(y)
+}
+```
+
+```{r, echo=FALSE}
+# Function that do Gibbs sampling for factor model
+# y - Data matrix
+# k - No of factor assumed
+# beta0 - Initial factor loading matrix
+
+factGibbsMod <- function(y, k, beta0, Sigma0, nu, C0, s, No.Iter, burnin, thin) {
+  
+  # Getting dimension information
+  T <- nrow(y)
+  m <- ncol(y)
+
+
+  # Take care of the case when k = 0
+  if (k == 0) {
+    output <- list()
+    output$beta <- NA
+    output$F <- NA
+    Sigma.temp <- numeric() # a draw from the posterior
+    for (j in 1:m) {
+      Sigma.temp[j] <- rigamma(
+        n = 1, alpha = (nu + T) / 2,
+        beta = (sum(y[, j]^2) + nu * s^2) / 2
+      )
+    }
+    output$Sigma[[1]] <- Sigma.temp # split out a posterior draw for Sigma
+    return(output)
+  }
+
+
+  ######
+  # list objects for the simulated parameters initialized
+
+  beta <- vector(mode = "list", length = No.Iter / thin)
+  Sigma <- vector(mode = "list", length = No.Iter / thin)
+  ##############################
+
+
+  # set the current values of the parameters
+  beta.cur <- beta0
+  Sigma.cur <- Sigma0
+
+
+  for (iter in 1:(No.Iter + burnin)) {
+    # update F
+    F.temp <- rmvnorm(
+      n = T,
+      mean = rep(0, k),
+      sigma = solve(diag(k) + t(beta.cur) %*% diag(1 / Sigma.cur) %*% beta.cur)
+    )
+
+
+    F.temp <- F.temp + t(solve(diag(k) + t(beta.cur) %*% diag(1 / Sigma.cur) %*% beta.cur) %*% t(beta.cur) %*% diag(1 / Sigma.cur) %*% t(y))
+
+    F.cur <- F.temp
+
+    # update Sigma
+    Sigma.temp <- numeric(m)
+
+    for (i in 1:m) {
+      if (i <= k) {
+        Sigma.temp[i] <- rigamma(
+          n = 1, alpha = (nu + T) / 2,
+          beta = (nu * s^2 + crossprod(y[, i] - F.cur[, 1:i] %*% as.matrix(beta.cur[i, 1:i]))) / 2
+        )
+      } else {
+        Sigma.temp[i] <- rigamma(
+          n = 1, alpha = (nu + T) / 2,
+          beta = (nu * s^2 + crossprod(y[, i] - F.cur %*% as.matrix(beta.cur[i, ]))) / 2
+        )
+      }
+    }
+
+    # update the Sigma list when necessary
+    if (iter > burnin && (iter - burnin) %% thin == 1 && thin != 1) {
+      Sigma[[(iter - burnin) %/% thin + 1]] <- Sigma.temp
+    } else if (thin == 1 && (iter - burnin) > 0) {
+      Sigma[[iter - burnin]] <- Sigma.temp
+    }
+
+    Sigma.cur <- Sigma.temp
+
+
+    # update beta
+
+    beta.temp <- matrix(0, nr = m, nc = k)
+
+    for (i in 1:m) {
+      if (i <= k) {
+        Ci <- solve(1 / C0 * diag(i) + 1 / Sigma.cur[i] * crossprod(F.cur[, 1:i]))
+        mi <- Ci %*% (1 / Sigma.cur[i] * t(F.cur[, 1:i]) %*% y[, i])
+
+        if (k != 1) {
+          beta.temp[i, i] <- ars(1, ldkernel,
+            ldkernelprima,
+            x = c(0.1, 500, 1000), m = length(c(0.1, 500, 1000)), lb = TRUE, ub = FALSE,
+            xlb = 0, k = k, i = i, mu = mi[i], c = Ci[i, i]
+          )
+        } else {
+          # to tackle the instability of ars when k = 1
+          beta.temp[i, i] <- rtnorm(n = 1, mean = mi[i], sd = sqrt(Ci[i, i]), lower = 0)
+        }
+
+        if (i != 1) {
+          beta.temp[i, 1:(i - 1)] <-
+            rmvnorm(1,
+              mean = mi[1:(i - 1)] + (1 / Ci[i, i]) * (beta.temp[i, i] - mi[i]) * Ci[1:(i - 1), i],
+              sigma = Ci[1:(i - 1), 1:(i - 1)] - 1 / Ci[i, i] * tcrossprod(Ci[1:(i - 1), i], Ci[i, 1:(i - 1)])
+            )
+        }
+      } else {
+        Ci <- solve(1 / C0 * diag(k) + 1 / Sigma.cur[i] * crossprod(F.cur))
+        mi <- Ci %*% (1 / Sigma.cur[i] * t(F.cur) %*% y[, i])
+        beta.temp[i, 1:k] <- rmvnorm(n = 1, mean = as.numeric(mi), sigma = Ci)
+      }
+    }
+
+    beta.cur <- beta.temp
+
+
+    if (iter > burnin && (iter - burnin) %% thin == 1 && thin != 1) {
+      beta[[(iter - burnin) %/% thin + 1]] <- beta.temp
+    } else if (thin == 1 && (iter - burnin) > 0) {
+      beta[[iter - burnin]] <- beta.temp
+    }
+
+
+    # if(iter%%1000 == 0 )
+    # cat("You are done with the ",iter, "th iterations when k is ", k,
+    #       append= T,
+    #     sep = "\n"
+    #       )
+  }
+
+  output <- list()
+  output$beta <- beta
+  output$Sigma <- Sigma
+
+  return(output)
+}
+
+```
+
+```{r, echo=FALSE}
+# Function that initialize parameters for Gibbs sampling
+# d - Dimension of the data
+# q - Assumed no of factor
+InitParam <- function(d, q) {
+  # init value for beta0 used in Gibbs sampler
+  beta_init = matrix(0, nr = d, nc = q) 
+  for(i in 1:q) {
+      if(i == 1){
+          beta_init[1, 1] = rtnorm(n = 1, mean = 0, sd =1, lower= 0)
+      } else {
+          lower.vec = c(rep(-Inf, i - 1), 0)
+          beta_init[i, 1:i] = rtmvnorm(n = 1, mean = rep(0, i), sigma = diag(i),
+                                   lower = lower.vec)
+      }
+  }
+  for(i in (q+1):d) {
+      beta_init[i,] = rmvnorm(n = 1, mean = rep(0, q), sigma = diag(q))
+  }
+  
+  Sigma_init = rep(1, d)
+  
+  return(list(beta = beta_init, sigma = Sigma_init))
+}
+
+# Function that computes ratio corresponding to the singular values 
+# d - Dimension of the data
+# q0 - True no of factor
+# q - Assumed no of factor
+SingularRatio <- function(obj, d, q0, q) {
+  net = length(obj$beta)
+  singratio = rep(0, net)
+  for (i in 1:net) {
+    beta = matrix(unlist(obj$beta[i]), d, q)
+    sing = svd(beta)$d
+    singratio[i] = sum(sing[(q0+1):q])/sum(sing[1:q])
+  }
+  return(singratio)
+}
+
+```
+
+
+```{r, echo=FALSE, message = FALSE}
+#set.seed(214)
+d  = 20      # number of columns in y, number of rows in beta
+q0 = 5       # number of columns in beta (number of factors)
+n  = 250     # number of rows in y (number of observations)
+q = q0 + 1   # number of factors we have assumed
+flag = 1
+
+thin    = 15
+burnin  = 2000
+seed    = 123
+No.Iter = 6000    # number of iterations to run Gibbs sampler
+  
+MCMCRatio <- function(n, d, q0, flag = 1, thin = 20, burnin = 2000, No.Iter = 6000) {
+  # Fixing some nuisance parameters
+  nu = 2.2
+  C0 = 1
+  s = sqrt(.1/2.2)
+ 
+  # Generating samples 
+  y = GenerateData(n, d, q0, flag)
+  
+  result = NULL
+  for(i in 1:3) {
+    q = q0 + i
+    
+    # Initializing the parameters
+    beta_init = InitParam(d, q)$beta
+    Sigma_init = InitParam(d, q)$sigma
+    
+    ## this gives us a net: No.Iter/thin posterior samples
+    ## Gibbs sampler for the regular dataset: y
+    obj = factGibbsMod(y = y, k = q, beta_init, Sigma_init, nu, C0, s, No.Iter, burnin, thin)
+    
+    # Getting ratios corresponding to the posterior samples of loading matrix after thinning 
+    singratio = SingularRatio(obj, d, q0, q)
+    
+    summary = c(mean(singratio), var(singratio), median(singratio), quantile(singratio, names = FALSE, probs = c(0.05, 0.25, 0.75, 0.95)))
+    
+    result = c(result, summary)
+  }
+  
+  return(result)
+}
+
+#MCMCRatio(n, d, q0, flag = 1, thin = 20, burnin = 2000, No.Iter = 6000)
+
+```
+
+```{r, echo = FALSE}
+start_time <- Sys.time()
+
+# Execute the code
+
+nworkers <- detectCores() # Initialize the cluster 
+cl <- makeCluster(nworkers)
+registerDoParallel(cl)
+
+
+nrep = 50
+
+output <- foreach (rep = 1:nrep) %dopar% {
+  library(mvtnorm)
+  library(tmvtnorm)
+  library(msm)
+  library(pscl)
+  library(ars)
+  
+  # Doing replicated simulation study
+  MCMCRatio(n = 250, d = 30, q0 = 5, flag = 1, thin = 20, burnin = 2000, No.Iter = 12000)
+}
+
+stopCluster(cl) # Stop the cluster
+
+
+# Get the ending time
+end_time <- Sys.time()
+
+# Calculate the elapsed time
+elapsed_time <- end_time - start_time
+
+```
+
+
+```{r, echo = FALSE}
+form_sigma = function(obj, n) {
+  sigma_list = vector(mode = "list", length = n)
+  for (i in 1:n) {
+    beta = matrix(unlist(obj$beta[i]), m, k)
+    omega = diag(unlist(obj$Sigma[i]))
+    sigma_list[[i]] = beta %*% t(beta) + omega
+  }
+  return(sigma_list)
+}
+
+form_beta = function(obj, n, d, q) {
+  beta_list = vector(mode = "list", length = n)
+  for (i in 1:n) {
+    beta = matrix(unlist(obj$beta[i]), d, q)
+    beta_list[[i]] = beta
+  }
+  return(beta_list)
+}
+
+form_beta_beta = function(obj, n) {
+  beta_list = vector(mode = "list", length = n)
+  for (i in 1:n) {
+    beta = matrix(unlist(obj$beta[i]), m, k)
+    beta_list[[i]] = beta %*% t(beta)
+  }
+  return(beta_list)
+}
+
+mean_sigma = function(sigma_list) {
+  sigma_sum = matrix(0, m, m)
+  for (i in 1:length(sigma_list)) {
+    sigma_sum = sigma_sum + sigma_list[[i]]
+  }
+  return(sigma_sum/length(sigma_list))
+}
+
+mean_beta = function(beta_list) {
+  beta_sum = matrix(0, m, k)
+  for (i in 1:length(beta_list)) {
+    beta_sum = beta_sum + beta_list[[i]]
+  }
+  return(beta_sum/length(beta_list))
+}
+
+mean_svd = function(A) {
+  return(svd(A)$d)
+}
+mean_beta_svd = function(beta_list) {
+  li = lapply(beta_list, mean_svd)
+  return(colMeans(matrix(unlist(li), ncol = k, byrow = T)))
+}
+
+
+
+mean_beta_beta = function(beta_list) {
+  beta_sum = matrix(0, m, m)
+  for (i in 1:length(beta_list)) {
+    beta_sum = beta_sum + beta_list[[i]]
+  }
+  return(beta_sum/length(beta_list))
+}
+```
+
+
+
+## Comparing parameter values with posterior means
+
+The results above seem to indicate that there is nothing wrong with the output of the posterior samples since we're able to replicate the invariant property claimed in the paper, but I think there still are some outstanding issues. 
+
+The true value of $\beta$ compared to the posterior mean of the $\beta$'s from the Gibbs sampler do not match. 
+
+```{r}
+beta_list = form_beta(obj, length(obj$beta))
+beta_est = mean_beta(beta_list)
+a = svd(beta_est)$d
+sum(a[(k0+1):k])/sum(a[1:k])
+mean(a[(k0+1):k])/((mean(a[1:k0]) + mean(a[(k0+1):k])))
+svd(W_true)$d
+b = mean_beta_svd(beta_list)
+sum(b[(k0+1):k])/sum(b[1:k])
+```
+
+
+Next, I checked if $\beta \beta'$ would match its posterior counterpart. These were particularly off.
+
+```{r}
+beta0 %*% t(beta0) # true value of beta beta'
+```
+
+
+```{r}
+# using posterior samples of beta to estimate beta beta'
+beta_beta_list = form_beta_beta(obj, length(obj$beta))
+mean_beta_beta(beta_beta_list)
+```
+
+
+Finally, I checked if the $\Sigma$ reconstructed from the posterior samples could even accurately produce an estimate for the true $\Sigma$. They are similar, but definitely not anywhere close to perfect on the off-diagonals. 
+
+```{r}
+# true Sigma
+beta0 %*% t(beta0) + omega0
+```
+
+
+```{r}
+mean_sigma(sigma_list) # posterior estimate of Sigma
+```
+
+We can compare this to the sample covariance matrix to see how good the covariance estimation is. 
+
+```{r}
+# sample covariance matrix
+1/n * t(y) %*% y
+```
+
+```{r}
+# sample covariance matrix
+cov(y) # same as above cuz y has 0 mean
+```
