@@ -16,18 +16,17 @@ rlangevin.gibbs <- function(M, X) {
 
 ## truncated gamma sampling
 myrtgamma = function(n, shape, scale, lb, ub) {
-  num_intervals <- 100 # You can increase this for finer intervals
+  num_intervals <- 1000 # You can increase this for finer intervals
   # Generate interval edges
   interval_edges <- seq(lb, ub, length.out = num_intervals + 1)
   # Calculate probabilities for each interval
   interval_probs <- sapply(1:num_intervals, function(i) {
     # Integrate the density over the interval
-    # lower <- interval_edges[i]
-    # upper <- interval_edges[i + 1]
-    # integrate(continuous_density, lower, upper)$value
     pgamma(interval_edges[i + 1], shape = shape, scale = scale) - 
       pgamma(interval_edges[i], shape = shape, scale = scale)
   })
+  print(interval_probs)
+  print(sum(interval_probs))
   # Normalize to create a probability distribution over intervals
   interval_probs <- interval_probs / sum(interval_probs)
   sampled_intervals <- sample(1:num_intervals, size = n, replace = TRUE, prob = interval_probs)
