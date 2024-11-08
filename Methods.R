@@ -163,5 +163,4 @@ ldkernel <- function(x, k, i, mu, c){
 #############
 ldkernelprima <- function(x, k, i, mu, c){
   return((k - i)/x - (x- mu)/c )
-  
 }

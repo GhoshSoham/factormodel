@@ -6,14 +6,19 @@
 # flag - Deciding homoscedastic or heteroscedastic error 
 GenerateData <- function(n, d, q0, flag = 1) {
   if (flag == 0) {
-    psi = rep(10, d)
+    psi = rep(0.0001, d)
   }
   if (flag == 1) {
-    psi = (10:(10+d-1)/4)
+    psi = sample(round(seq(from = 0.05, to = 0.1, length.out = d), 3), size = d)
   }
   
   # Generating loading matrix
-  W_true = matrix(rnorm(d*q0, 0, 1), nrow = d, ncol = q0)
+  #W_true = matrix(rnorm(d*q0, 0, 1), nrow = d, ncol = q0)
+  
+  lam = sample(x = 4:9, size = d, replace = TRUE)
+  U = pracma::randortho(d, type = "orthonormal")
+  V = pracma::randortho(d, type = "orthonormal")
+  W_true = U %*% diag(lam) %*% V[, 1:q0]
   
   # Generating data matrix
   y = matrix(0, nrow = n, ncol = d)

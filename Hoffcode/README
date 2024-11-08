@@ -1,0 +1,14 @@
+This directory contains R-code and data to produce all of the numerical results.
+Specifically, 
+
+table1.r and table2.r produce the results in tables 1 and 2
+
+figure1.r and figure2.r produce figures 1 and 2
+
+The code in "ppnetwork.r" must be run before running figure2.r.
+The files "image..." contain the results of running ppnetwork.r,
+and can be loaded by figure2.r if one wants to avoid running ppnetwork.r.
+
+
+
+

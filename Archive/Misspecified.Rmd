@@ -22,7 +22,7 @@ library(foreach)
 library(doParallel)
 
 
-setwd("/Users/sohamghosh/Desktop/orderinvariantfactormodelcode")
+setwd("/Users/sohamghosh/Desktop/factormodel")
 
 ```
 
@@ -35,16 +35,50 @@ Below, we generate the true parameters. We take $\Omega = I_m$ and randomly gene
 # d - Dimension of the data
 # q0 - True no of factor
 # flag - Deciding homoscedastic or heteroscedastic error 
+# GenerateData <- function(n, d, q0, flag = 1) {
+#   if (flag == 0) {
+#     psi = rep(1, d)
+#   }
+#   if (flag == 1) {
+#     psi = (10:(10+d-1)/4)
+#   }
+#   
+#   # Generating loading matrix
+#   W_true = matrix(rnorm(d*q0, 0, 1), nrow = d, ncol = q0)
+#   
+#   # Generating data matrix
+#   y = matrix(0, nrow = n, ncol = d)
+#   for(i in 1:n){
+#     f = rnorm(q0, mean = 0, sd = 1)
+#     y[i,] = rmvnorm(n = 1, mean = W_true %*% f, sigma = diag(psi))
+#   }
+#   
+#   return(y)
+# }
+
+# Function that generates data for factor model
+# n - No of samples in data
+# d - Dimension of the data
+# q0 - True no of factor
+# flag - Deciding homoscedastic or heteroscedastic error 
 GenerateData <- function(n, d, q0, flag = 1) {
   if (flag == 0) {
-    psi = rep(10, d)
+    psi = rep(0.1, d)
   }
   if (flag == 1) {
-    psi = (10:(10+d-1)/4)
+    psi = sample(round(seq(from = 0.05, to = 0.1, length.out = d), 3), size = d)
   }
   
   # Generating loading matrix
-  W_true = matrix(rnorm(d*q0, 0, 1), nrow = d, ncol = q0)
+  #W_true = matrix(rnorm(d*q0, 0, 1), nrow = d, ncol = q0)
+  
+  lam = sample(x = 10:14, size = q0, replace = TRUE)
+  D = matrix(0, nrow = d, ncol = q0)
+  diag(D) = lam
+  #lam = sample(x = 10:15, size = d, replace = TRUE)
+  U = pracma::randortho(d, type = "orthonormal")
+  V = pracma::randortho(q0, type = "orthonormal")
+  W_true = U %*% D %*% V[, 1:q0]
   
   # Generating data matrix
   y = matrix(0, nrow = n, ncol = d)
@@ -55,6 +89,7 @@ GenerateData <- function(n, d, q0, flag = 1) {
   
   return(y)
 }
+
 ```
 
 ```{r, echo=FALSE}
@@ -198,6 +233,17 @@ factGibbsMod <- function(y, k, beta0, Sigma0, nu, C0, s, No.Iter, burnin, thin) 
   return(output)
 }
 
+#############
+ldkernel <- function(x, k, i, mu, c){
+  return((k - i)*log(x) - 0.5* (x - mu)^2/c)
+}
+
+#############
+ldkernelprima <- function(x, k, i, mu, c){
+  return((k - i)/x - (x- mu)/c )
+  
+}
+
 ```
 
 ```{r, echo=FALSE}
@@ -245,16 +291,16 @@ SingularRatio <- function(obj, d, q0, q) {
 
 ```{r, echo=FALSE, message = FALSE}
 #set.seed(214)
-d  = 20      # number of columns in y, number of rows in beta
-q0 = 5       # number of columns in beta (number of factors)
-n  = 250     # number of rows in y (number of observations)
+d  = 100      # number of columns in y, number of rows in beta
+q0 = 10       # number of columns in beta (number of factors)
+n  = 1000     # number of rows in y (number of observations)
 q = q0 + 1   # number of factors we have assumed
-flag = 1
+flag = 0
 
-thin    = 15
+thin    = 20
 burnin  = 2000
 seed    = 123
-No.Iter = 6000    # number of iterations to run Gibbs sampler
+No.Iter = 12000    # number of iterations to run Gibbs sampler
   
 MCMCRatio <- function(n, d, q0, flag = 1, thin = 20, burnin = 2000, No.Iter = 6000) {
   # Fixing some nuisance parameters
@@ -263,7 +309,7 @@ MCMCRatio <- function(n, d, q0, flag = 1, thin = 20, burnin = 2000, No.Iter = 60
   s = sqrt(.1/2.2)
  
   # Generating samples 
-  y = GenerateData(n, d, q0, flag)
+  y = GenerateData(n, d, q0, flag = 0)
   
   result = NULL
   for(i in 1:3) {
@@ -302,7 +348,7 @@ cl <- makeCluster(nworkers)
 registerDoParallel(cl)
 
 
-nrep = 50
+nrep = 10
 
 output <- foreach (rep = 1:nrep) %dopar% {
   library(mvtnorm)
@@ -312,7 +358,7 @@ output <- foreach (rep = 1:nrep) %dopar% {
   library(ars)
   
   # Doing replicated simulation study
-  MCMCRatio(n = 250, d = 30, q0 = 5, flag = 1, thin = 20, burnin = 2000, No.Iter = 12000)
+  MCMCRatio(n = 250, d = 30, q0 = 10, flag = 0, thin = 20, burnin = 2000, No.Iter = 12000)
 }
 
 stopCluster(cl) # Stop the cluster
@@ -324,10 +370,42 @@ end_time <- Sys.time()
 # Calculate the elapsed time
 elapsed_time <- end_time - start_time
 
+beta = mean_beta(form_beta(obj, n, d, q))
+
 ```
 
 
 ```{r, echo = FALSE}
+form_beta = function(obj, n, d, q) {
+  beta_list = vector(mode = "list", length = n)
+  for (i in 1:n) {
+    beta = matrix(unlist(obj$beta[[i]]), d, q)
+    beta_list[[i]] = beta
+  }
+  return(beta_list)
+}
+
+betalist = form_beta(obj, n, d, q)
+
+# mean_beta = function(beta_list) {
+#   beta_sum = matrix(0, d, q)
+#   for (i in 1:length(beta_list)) {
+#     beta_sum = beta_sum + beta_list[[i]]
+#   }
+#   return(beta_sum/length(beta_list))
+# }
+
+mean_beta = function(obj) {
+  eigen_max = 0
+  for (i in 1:length(obj$beta)) {
+    eigen_max = eigen_max + svd(obj$beta[[i]])$d[1]
+  }
+  return(eigen_max/length(beta_list))
+}
+
+
+beta_eigen = mean_beta(obj)
+
 form_sigma = function(obj, n) {
   sigma_list = vector(mode = "list", length = n)
   for (i in 1:n) {
@@ -338,14 +416,6 @@ form_sigma = function(obj, n) {
   return(sigma_list)
 }
 
-form_beta = function(obj, n, d, q) {
-  beta_list = vector(mode = "list", length = n)
-  for (i in 1:n) {
-    beta = matrix(unlist(obj$beta[i]), d, q)
-    beta_list[[i]] = beta
-  }
-  return(beta_list)
-}
 
 form_beta_beta = function(obj, n) {
   beta_list = vector(mode = "list", length = n)
@@ -362,14 +432,6 @@ mean_sigma = function(sigma_list) {
     sigma_sum = sigma_sum + sigma_list[[i]]
   }
   return(sigma_sum/length(sigma_list))
-}
-
-mean_beta = function(beta_list) {
-  beta_sum = matrix(0, m, k)
-  for (i in 1:length(beta_list)) {
-    beta_sum = beta_sum + beta_list[[i]]
-  }
-  return(beta_sum/length(beta_list))
 }
 
 mean_svd = function(A) {
