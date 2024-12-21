@@ -14,15 +14,16 @@ GenerateData <- function(n, d, k0, r, sigma, flag = 0) {
   }
   
   
-  U = matrix(rnorm(d*k0, 0, 1), nrow = d, ncol = k0)
-  W_true = r*svd(U)$u
+  U_temp = matrix(rnorm(d*k0, 0, 1), nrow = d, ncol = k0)
+  U = svd(U_temp)$u
+  W_true = r*U
   
   # Generating data matrix
   F = matrix(rnorm(n*k0, mean = 0, sd = 1), n, k0) 
   X = F %*% t(W_true) + matrix(rnorm(n*d, mean = 0, sd = 1), n, d)
   
   eff_rank = (k0*r^2 + d*sigma^2)/(r^2 + sigma^2)
-  return(list(X = X, R = r, U = U, eff_rank = eff_rank))
+  return(list(X = X, r = r, U = U, eff_rank = eff_rank))
 }
 
 #############
