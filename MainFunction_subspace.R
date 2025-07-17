@@ -32,7 +32,7 @@ MCMCsub <- function(n, d, k, flag = 0, thin = 10, burnin = 1000, No_Iter = 10000
 library(truncnorm)
 library(vMF)
 library(MASS)
-result = MCMCsub(n = 500, d = 2000, k = 2, flag = 0, thin = 1, burnin = 0, No_Iter = 200)
+result = MCMCsub(n = 50, d = 2000, k = 2, flag = 0, thin = 1, burnin = 0, No_Iter = 200)
 
 # Execute the code
 

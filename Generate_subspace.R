@@ -23,7 +23,8 @@ GenerateData <- function(n, d, k0, r, sigma, flag = 0) {
   X = F %*% t(W_true) + matrix(rnorm(n*d, mean = 0, sd = 1), n, d)
   
   eff_rank = (k0*r^2 + d*sigma^2)/(r^2 + sigma^2)
-  return(list(X = X, r = r, U = U, eff_rank = eff_rank))
+  ratio = r/sigma
+  return(list(X = X, r = r, U = U, eff_rank = eff_rank, ratio = ratio))
 }
 
 #############
