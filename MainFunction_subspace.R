@@ -14,7 +14,7 @@ MCMCsub <- function(n, d, k, flag = 0, thin = 10, burnin = 1000, No_Iter = 10000
   intpara = InitParam(d, k, lambda = 1)
   
   sampling = factGibbsMod(X = dat$X, k = k, U0 = intpara$U, r0 = intpara$r,
-                          sigma0 = 0.001, Ut = dat$U, No_Iter = No_Iter, 
+                          sigma0 = 0.01, Ut = dat$U, No_Iter = No_Iter, 
                           burnin = burnin, thin = thin)
   
   dist_summ = c(mean(unlist(sampling$dist)), var(unlist(sampling$dist)), median(unlist(sampling$dist)), 
