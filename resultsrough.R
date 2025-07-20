@@ -37,22 +37,3 @@ te = prcomp(dat$X)
 dat1 = scale(dat$X, scale = FALSE)
 te3 = svd(dat1, 0, 2)$v
 
-# result = NULL
-# for(i in 1:3) {
-#   q = q0 + i
-#   
-#   # Initializing the parameters
-#   beta_init = InitParam(d, q)$beta
-#   Sigma_init = InitParam(d, q)$sigma
-#   
-#   ## this gives us a net: No.Iter/thin posterior samples
-#   ## Gibbs sampler for the regular dataset: y
-#   obj = factGibbsMod(y = y, k = q, beta_init, Sigma_init, nu, C0, s, No.Iter, burnin, thin)
-#   
-#   # Getting ratios corresponding to the posterior samples of loading matrix after thinning 
-#   singratio = SingularRatio(obj, d, q0, q)
-#   
-#   summary = c(mean(singratio), var(singratio), median(singratio), quantile(singratio, names = FALSE, probs = c(0.05, 0.25, 0.75, 0.95)))
-#   
-#   result = c(result, summary)
-# }
